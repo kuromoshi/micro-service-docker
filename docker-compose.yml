@@ -1,0 +1,107 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: postgres_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: userdb
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin123
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - app_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d userdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    container_name: minio_storage
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    networks:
+      - app_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  api:
+    build: ./api
+    container_name: api_service
+    restart: unless-stopped
+    environment:
+      DB_HOST: postgres
+      PAGINATION_DEFAULT_LIMIT: 10
+      PAGINATION_MAX_LIMIT: 100
+      DB_PORT: 5432
+      DB_NAME: userdb
+      DB_USER: admin
+      DB_PASSWORD: admin123
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin123
+      MINIO_BUCKET: profile-mahasiswa
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - app_network
+    volumes:
+      - ./api:/app
+
+  backend:
+    build: ./backend
+    container_name: backend_service
+    restart: unless-stopped
+    environment:
+      API_URL: http://api:8080
+    ports:
+      - "5001:5001"
+    depends_on:
+      - api
+    networks:
+      - app_network
+    volumes:
+      - ./backend:/app
+
+  frontend:
+    build: ./frontend
+    container_name: frontend_service
+    restart: unless-stopped
+    environment:
+      BACKEND_URL: http://backend:5001
+    ports:
+      - "5000:5000"
+    depends_on:
+      - backend
+    networks:
+      - app_network
+    volumes:
+      - ./frontend:/app
+
+networks:
+  app_network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  minio_data:
